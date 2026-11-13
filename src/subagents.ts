@@ -311,6 +311,10 @@ export default function subagents(pi: ExtensionAPI) {
 
   pi.registerCommand("subagents", {
     description: "Background children: list, result ID, stop ID",
+    getArgumentCompletions: (prefix: string) => {
+      const items = ["list", "result", "stop"].filter(verb => verb.startsWith(prefix)).map(value => ({ value, label: value }));
+      return items.length ? items : null;
+    },
     handler: async (args, ctx) => {
       const text = args.trim();
       const [verb = ""] = text.split(/\s+/);
