@@ -1,0 +1,14 @@
+{
+  "name": "@ingur/pi-subagents",
+  "version": "0.1.0",
+  "description": "Background subagents for ordinary Pi sessions",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "files": ["src"],
+  "pi": { "extensions": ["./src/subagents.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}
