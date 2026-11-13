@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export PI_CODING_AGENT_DIR="$repo/.state/pi"
+export PI_SUBAGENTS_STATE_DIR="$repo/.state/subagents"
+exec pi -e "$repo" "$@"
