@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Background subagents for ordinary Pi sessions",
   "type": "module",
+  "license": "MIT",
   "keywords": ["pi-package"],
   "files": ["src"],
   "pi": { "extensions": ["./src/subagents.ts"] },
