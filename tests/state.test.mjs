@@ -105,7 +105,6 @@ test("replayed completions do not wake, but current-session starts and follow-up
   const visible = new Map([...completions.keys()].map(key => [key, "entry"]));
   assert.deepEqual(wakeKeys(completions, visible, restored.runs), [started, followUp]);
   state.paused = true;
-  state.reason = "Parent turn aborted";
   atomicJSON(directory, "adapter.json", state);
   assert.equal(loadState(directory, owner).paused, true, "an actual abort pause is preserved");
 });

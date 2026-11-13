@@ -222,7 +222,7 @@ test("queued cancellation and acknowledged steering preserve ownership until pro
   for (let i = 0; i < 5; i++) children.push(await manager.start(launch(cwd, scenario({ hold: true }))));
   assert.equal(manager.list().filter(value => value.status === "running").length, 4);
   assert.equal(manager.result(children[4].id).status, "queued");
-  await assert.rejects(manager.start({ resume: children[0].id, task: "overlap" }), /active attempt/);
+  await assert.rejects(manager.start({ resume: children[0].id, task: "overlap" }), /already working/);
   const queued = await manager.stop(children[4].id);
   assert.equal(queued.status, "cancelled");
   assert(!existsSync(join(stateDir, owner, queued.id, "session.jsonl")));
@@ -298,12 +298,12 @@ test("dead-owner recovery interrupts queued work without replay and validates re
   const recovered = create(value => replay.push(value));
   await Promise.resolve();
   assert.equal(recovered.result(result.id).status, "interrupted");
-  assert.match(recovered.result(result.id).error, /not replayed/);
+  assert.match(recovered.result(result.id).error, /incomplete/);
   assert.equal(replay.length, 2);
   assert.equal(JSON.parse(readFileSync(join(dirname(result.resultPath), "capture.json"), "utf8")).task, "task");
   const sessionPath = join(stateDir, owner, result.id, "session.jsonl");
   writeFileSync(sessionPath, JSON.stringify({ type: "session", id: randomUUID(), cwd: "/wrong" }) + "\n");
-  await assert.rejects(recovered.start({ resume: result.id, task: "follow" }), /identity or cwd/);
+  await assert.rejects(recovered.start({ resume: result.id, task: "follow" }), /saved conversation is invalid/);
   await assert.rejects(recovered.start({ resume: "../../other", task: "follow" }), /UUID/);
   await assert.rejects(recovered.start({ ...launch(cwd), cwd: `${cwd}/..` }), /canonical/);
 });
@@ -337,7 +337,7 @@ process.exit(0);
   const child = JSON.parse(readFileSync(ready, "utf8"));
   const recovered = create();
   assert.equal(recovered.result(child.id).status, "interrupted");
-  await assert.rejects(recovered.start({ resume: child.id, task: "overlap" }), /blocks resume/);
+  await assert.rejects(recovered.start({ resume: child.id, task: "overlap" }), /may still have processes/);
   assert.equal((await recovered.stop(child.id)).status, "cancelled");
   const next = await recovered.start({ resume: child.id, task: "follow-up" });
   assert.equal(next.run, 2);
@@ -366,9 +366,35 @@ test("uncertain spawn ownership is never cleared by restart or an unverified sto
   atomicJSON(dirname(result.resultPath), "run-1.json", { ...record, status: "running", launchPending: true, processes: [] });
   const recovered = create();
   assert.equal(recovered.result(result.id).status, "interrupted");
-  await assert.rejects(recovered.start({ resume: result.id, task: "unsafe follow-up" }), /blocks resume/);
+  await assert.rejects(recovered.start({ resume: result.id, task: "unsafe follow-up" }), /may still have processes/);
   assert.equal((await recovered.stop(result.id)).status, "interrupted");
-  await assert.rejects(recovered.start({ resume: result.id, task: "still unsafe" }), /blocks resume/);
+  await assert.rejects(recovered.start({ resume: result.id, task: "still unsafe" }), /may still have processes/);
+});
+
+test("forget frees the slot of a stuck subagent and is refused while its processes live", async t => {
+  const { cwd, create } = setup(t);
+  const manager = create();
+  const stuck = await finished(manager, (await manager.start(launch(cwd))).id);
+  const alive = await finished(manager, (await manager.start(launch(cwd))).id);
+  await manager.close();
+  const sleeper = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+  t.after(() => sleeper.kill("SIGKILL"));
+  const saved = child => JSON.parse(readFileSync(child.resultPath, "utf8"));
+  atomicJSON(dirname(stuck.resultPath), "run-1.json", { ...saved(stuck), status: "running", launchPending: true, processes: [] });
+  atomicJSON(dirname(alive.resultPath), "run-1.json", { ...saved(alive), status: "running", processes: [{ ...processIdentity(sleeper.pid), group: sleeper.pid }] });
+  const recovered = create();
+  assert.throws(() => recovered.forget(alive.id), /stop it first/);
+  for (let i = 0; i < 2; i++) await recovered.start(launch(cwd, scenario({ hold: true })));
+  const waiting = await recovered.start(launch(cwd));
+  assert.equal(recovered.result(waiting.id).status, "queued", "two stuck records and two running fill the slots");
+  recovered.forget(stuck.id);
+  assert.equal(existsSync(dirname(stuck.resultPath)), false);
+  assert.throws(() => recovered.result(stuck.id), /Unknown subagent/);
+  assert.equal((await finished(recovered, waiting.id)).status, "succeeded");
+  sleeper.kill("SIGKILL");
+  await new Promise(resolve => sleeper.once("exit", resolve));
+  recovered.forget(alive.id);
+  assert.equal(recovered.list().some(child => child.id === alive.id), false);
 });
 
 test("boot identity prevents stale PID metadata from claiming a new process", async t => {
@@ -381,7 +407,7 @@ test("boot identity prevents stale PID metadata from claiming a new process", as
   const current = processIdentity();
   atomicJSON(dirname(result.resultPath), "run-1.json", { ...record, status: "running", processes: [{ ...current, boot: "different-boot", group: current.pid }] });
   const recovered = create();
-  assert.match(recovered.result(result.id).error, /not replayed/);
+  assert.match(recovered.result(result.id).error, /incomplete/);
   await recovered.stop(result.id);
   assert.equal(ownerState(current), "live");
   const next = await recovered.start({ resume: result.id, task: "safe follow-up" });
@@ -454,7 +480,7 @@ test("cancelling an in-flight send rejects its waiter and never replays it", asy
   const { cwd, create } = setup(t);
   const manager = create();
   const child = await manager.start(launch(cwd, scenario({ sendHoldAck: true, hold: true })));
-  const sent = assert.rejects(manager.send({ id: child.id, text: "not acknowledged" }), /cancel|acknowledg|unknown/i);
+  const sent = assert.rejects(manager.send({ id: child.id, text: "not acknowledged" }), /stopped|acknowledg|unknown/i);
   const capture = join(dirname(child.resultPath), "capture.json");
   await until(() => existsSync(capture) && JSON.parse(readFileSync(capture, "utf8")).prompts.length === 2, "pending send");
   const stopping = manager.stop(child.id);

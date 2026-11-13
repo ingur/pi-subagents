@@ -21,6 +21,7 @@ Just ask: "review this in a subagent while we continue".
 | `/subagents` | status |
 | `/subagents result ID` | read a result |
 | `/subagents stop ID` | cancel |
+| `/subagents forget ID` | drop a finished or stuck one and free its slot |
 
 Tools: `subagent_start`, `subagent_send`, `subagent_list`, `subagent_result`, `subagent_stop`.
 

@@ -6,18 +6,17 @@ import { observeEditor, type EditorFocus } from "./lib/interaction.ts";
 import { mayDeliver } from "./lib/delivery.mjs";
 import { atomicJSON, sessionId } from "./lib/state.mjs";
 import { SubagentManager } from "./runner.mjs";
-import { MESSAGE_TYPE, WAKE_TYPE, boundedResult, compactChild, formatCompletion, help, parentInstructions, toolDescriptions, wakeInstruction } from "./prompts.mjs";
-import type { ResultPreview } from "./prompts.mjs";
+import { MESSAGE_TYPE, WAKE_TYPE, boundedResult, compactChild, formatCompletion, help, notes, parameterDescriptions as about, parentInstructions, toolDescriptions, wakeInstruction } from "./prompts.mjs";
 import { loadState, processingKeys, receiptEntries, retireRecorded, settleTurn, stateDirectory, wakeKeys, type State } from "./state.mjs";
 
 type Child = {
   id: string; run: number; status: string; cwd: string; model: string; thinking: string; task: string;
-  activity?: string; error?: string; output?: string; resultPath?: string;
+  activity?: string; error?: string; output?: string; resultPath?: string; note?: string;
 };
 type Receipts = { visible: Map<string, string>; persisted: Map<string, string> };
 type Runtime = {
   owner: string; directory: string; sessionFile: string; ctx: ExtensionContext; manager: SubagentManager;
-  state: State; completions: Map<string, ResultPreview>; recorded: Set<string>;
+  state: State; completions: Map<string, Child>; recorded: Set<string>;
   editor: EditorFocus; unsubscribe?: () => void; timer?: NodeJS.Timeout;
   lastInteraction: number; promptOpen: number; launching: number; lastStatus?: string; fault?: string;
   inFlight?: { keys: string[]; at: number }; processing: string[]; outcome?: "completed" | "aborted" | "error";
@@ -26,15 +25,18 @@ type Runtime = {
 const terminal: Record<string, true | undefined> = { succeeded: true, failed: true, cancelled: true, interrupted: true };
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const startSchema = Type.Object({
-  task: Type.String({ minLength: 1 }),
-  cwd: Type.Optional(Type.String({ minLength: 1 })), model: Type.Optional(Type.String({ minLength: 1 })),
-  thinking: Type.Optional(Type.Union(thinkingLevels.map(level => Type.Literal(level)))),
+  task: Type.String({ minLength: 1, description: about.task }),
+  cwd: Type.Optional(Type.String({ minLength: 1, description: about.cwd })),
+  model: Type.Optional(Type.String({ minLength: 1, description: about.model })),
+  thinking: Type.Optional(Type.Union(thinkingLevels.map(level => Type.Literal(level)), { description: about.thinking })),
 }, { additionalProperties: false });
-const idSchema = Type.Object({ id: Type.String({ minLength: 1 }) }, { additionalProperties: false });
-const sendSchema = Type.Object({ id: Type.String({ minLength: 1 }), text: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+const idSchema = Type.Object({ id: Type.String({ minLength: 1, description: about.id }) }, { additionalProperties: false });
+const sendSchema = Type.Object({
+  id: Type.String({ minLength: 1, description: about.id }), text: Type.String({ minLength: 1, description: about.text }),
+}, { additionalProperties: false });
 const describeError = (error: unknown) => error instanceof Error ? error.message : String(error);
 const keyOf = (child: Pick<Child, "id" | "run">) => `${child.id}:${child.run}`;
-const toolResult = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], details: value });
+const toolResult = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value });
 
 function launchArguments(value: unknown, ctx: ExtensionContext, pi: ExtensionAPI) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a start JSON object");
@@ -82,16 +84,15 @@ export default function subagents(pi: ExtensionAPI) {
     catch (error) { report(r, error); throw error; }
   }
 
-  function pause(r: Runtime, paused: boolean, reason: string) {
+  function pause(r: Runtime, paused: boolean) {
     r.state.paused = paused;
-    r.state.reason = reason;
     save(r);
   }
 
   function remember(r: Runtime, child: Child) {
     if (!terminal[child.status]) return;
     const key = keyOf(child);
-    if (!r.recorded.has(key)) r.completions.set(key, boundedResult(child));
+    if (!r.recorded.has(key)) r.completions.set(key, child);
     if (!r.state.runs[key]) {
       // An origin lost before metadata was saved must never become an automatic wake.
       r.state.runs[key] = { manual: true };
@@ -107,9 +108,8 @@ export default function subagents(pi: ExtensionAPI) {
 
   function list(r: Runtime) {
     return {
-      children: r.manager.list().map((child: Child) => compactChild(child)),
-      automaticRepliesPaused: r.state.paused,
-      ...(r.state.paused ? { reason: r.state.reason } : {}),
+      subagents: r.manager.list().map((child: Child) => compactChild(child)),
+      ...(r.state.paused ? { note: notes.paused } : {}),
       ...(r.fault ? { error: r.fault } : {}),
     };
   }
@@ -121,7 +121,7 @@ export default function subagents(pi: ExtensionAPI) {
   }
 
   async function start(r: Runtime, args: unknown, ctx: ExtensionContext) {
-    if (r.fault) throw new Error(`Notification state is unavailable: ${r.fault}`);
+    if (r.fault) throw new Error(`Subagents are unavailable in this session because of an internal error: ${r.fault}. Tell the user.`);
     const launch = launchArguments(args, ctx, pi);
     r.launching++;
     try {
@@ -129,14 +129,14 @@ export default function subagents(pi: ExtensionAPI) {
       const key = keyOf(child);
       r.state.runs[key] = { ...r.state.runs[key], manual: false };
       try { save(r); }
-      catch (error) { throw new Error(`Child ${child.id}, run ${child.run} was accepted, but notification state could not be saved: ${describeError(error)}. Inspect /subagents list; automatic wakes are paused.`); }
+      catch (error) { throw new Error(`Subagent ${child.id} was started, but its result will not arrive by itself because of an internal error: ${describeError(error)}. Read it later with subagent_result, and tell the user.`); }
       remember(r, child);
-      return { ...compactChild(child), automaticWake: true };
+      return { id: child.id, status: child.status, note: notes.started };
     } finally { r.launching--; }
   }
 
   async function send(r: Runtime, args: unknown) {
-    if (r.fault) throw new Error(`Notification state is unavailable: ${r.fault}`);
+    if (r.fault) throw new Error(`Subagents are unavailable in this session because of an internal error: ${r.fault}. Tell the user.`);
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("Expected a send JSON object");
     const value = args as Record<string, unknown>;
     if (Object.keys(value).some(key => !["id", "text"].includes(key)) || typeof value.text !== "string" || !value.text.trim()) throw new Error("send requires id and nonempty text only");
@@ -150,9 +150,9 @@ export default function subagents(pi: ExtensionAPI) {
       // Existing attempts retain their wake policy; a retained follow-up has a new origin.
       if (child.run !== previous.run || !r.state.runs[key]) r.state.runs[key] = { manual: false };
       try { save(r); }
-      catch (error) { throw new Error(`Instruction for child ${id}, run ${child.run} was accepted, but notification state could not be saved: ${describeError(error)}. Inspect /subagents list; automatic wakes are paused.`); }
+      catch (error) { throw new Error(`The instruction was sent to subagent ${id}, but its result will not arrive by itself because of an internal error: ${describeError(error)}. Read it later with subagent_result, and tell the user.`); }
       remember(r, child);
-      return { ...compactChild(child), delivery: child.delivery, note: child.note, automaticWake: !r.state.runs[key].manual };
+      return { id: child.id, status: child.status, note: child.note };
     } finally { r.launching--; }
   }
 
@@ -169,7 +169,7 @@ export default function subagents(pi: ExtensionAPI) {
         for (const key of r.inFlight.keys) r.state.runs[key].turn = "uncertain";
         r.inFlight = undefined;
         r.processing = [];
-        pause(r, true, "Parent wake did not settle observably; inspect the Pi error and results, then submit a human prompt");
+        pause(r, true);
       }
       let seen = r.completions.size ? receipts(r) : { visible: new Map(), persisted: new Map() };
       retireRecorded(r.completions, seen.persisted, r.state.runs, r.recorded);
@@ -200,7 +200,7 @@ export default function subagents(pi: ExtensionAPI) {
       for (const key of keys) r.state.runs[key].turn = "attempting";
       r.inFlight = { keys, at: Date.now() };
       save(r);
-      pi.sendMessage({ customType: WAKE_TYPE, content: wakeInstruction(keys), display: false,
+      pi.sendMessage({ customType: WAKE_TYPE, content: wakeInstruction, display: false,
         details: { version: 1, owner: r.owner, attempts: keys } }, { triggerTurn: true });
     } catch (error) { report(r, error); }
   }
@@ -259,7 +259,7 @@ export default function subagents(pi: ExtensionAPI) {
   pi.on("input", event => {
     if (runtime && event.source === "interactive") {
       runtime.lastInteraction = Date.now();
-      pause(runtime, false, "Human submitted a prompt");
+      pause(runtime, false);
     }
     return { action: "continue" };
   });
@@ -310,9 +310,9 @@ export default function subagents(pi: ExtensionAPI) {
     async execute(_id, args, _signal, _update, ctx) { return toolResult(await stop(bound(ctx), args.id)); } });
 
   pi.registerCommand("subagents", {
-    description: "Background children: list, result ID, stop ID",
+    description: "Background subagents: list, result ID, stop ID, forget ID",
     getArgumentCompletions: (prefix: string) => {
-      const items = ["list", "result", "stop"].filter(verb => verb.startsWith(prefix)).map(value => ({ value, label: value }));
+      const items = ["list", "result", "stop", "forget"].filter(verb => verb.startsWith(prefix)).map(value => ({ value, label: value }));
       return items.length ? items : null;
     },
     handler: async (args, ctx) => {
@@ -327,6 +327,7 @@ export default function subagents(pi: ExtensionAPI) {
         if (!verb || verb === "list") value = list(r);
         else if (verb === "result") value = result(r, body);
         else if (verb === "stop") value = await stop(r, body);
+        else if (verb === "forget") { r.manager.forget(sessionId(body)); value = list(r); }
         else throw new Error(help);
         ctx.ui.notify(JSON.stringify(value, null, 2), "info");
       } catch (error) { ctx.ui.notify(`Subagents: ${describeError(error)}`, "error"); }

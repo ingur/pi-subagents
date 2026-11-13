@@ -5,7 +5,7 @@ import { MESSAGE_TYPE } from "./prompts.mjs";
 
 /** @typedef {"attempting" | "turn-settled" | "aborted" | "failed" | "uncertain"} Turn */
 /** @typedef {{ manual: boolean, turn?: Turn }} Attempt */
-/** @typedef {{ version: 1, owner: string, paused: boolean, reason?: string, runs: Record<string, Attempt> }} State */
+/** @typedef {{ version: 1, owner: string, paused: boolean, runs: Record<string, Attempt> }} State */
 
 export function stateDirectory(env = process.env, home = homedir()) {
   const directory = env.PI_SUBAGENTS_STATE_DIR || join(env.XDG_STATE_HOME || join(home, ".local", "state"), "pi-subagents");
@@ -35,7 +35,7 @@ export function loadState(directory, owner) {
     sessionId(key.slice(0, split));
     if (!/^[1-9][0-9]*$/.test(key.slice(split + 1)) || typeof attempt?.manual !== "boolean" ||
         (attempt.turn !== undefined && !["attempting", "turn-settled", "aborted", "failed", "uncertain"].includes(attempt.turn))) {
-      throw new Error("Invalid subagent attempt state");
+      throw new Error("Invalid subagent run state");
     }
     // Earlier attempts are replay-only; current-session starts/follow-ups register new automatic wakes.
     attempt.manual = true;
@@ -50,10 +50,7 @@ export function settleTurn(state, processing, inFlight, aborted, outcome) {
   const turn = aborted ? "aborted" : outcome === "completed" ? "turn-settled" : outcome === "error" ? "failed" : "uncertain";
   for (const key of keys) state.runs[key].turn = turn;
   const paused = aborted || (keys.size > 0 && turn !== "turn-settled");
-  if (paused) {
-    state.paused = true;
-    state.reason = `Parent turn ${turn}; inspect results, then submit a human prompt`;
-  }
+  if (paused) state.paused = true;
   return paused || keys.size > 0;
 }
 

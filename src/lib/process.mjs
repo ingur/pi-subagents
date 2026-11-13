@@ -1,3 +1,4 @@
+// Copied from pi-projects core/lib, which no longer has a copy; this one is maintained here.
 import * as linux from "./process/linux.mjs";
 import * as darwin from "./process/darwin.mjs";
 
@@ -8,10 +9,6 @@ function backend() {
 
 export function requireProcessSupport() {
   if (!["linux", "darwin"].includes(process.platform)) throw new Error(`Process ownership tracking requires Linux or macOS; unsupported platform: ${process.platform}`);
-}
-
-export function bootIdentity() {
-  return backend().bootIdentity();
 }
 
 // Identity = pid + boot + start (Linux clock ticks, macOS UTC start second).
@@ -28,27 +25,7 @@ export function ownerState(owner, snapshot) {
     const current = processIdentity(owner.pid, snapshot);
     state = current.boot === owner.boot && current.start === owner.start && !["Z", "X"].includes(current.state) ? "live" : "dead";
   } catch (error) { state = error.code === "ENOENT" ? "dead" : "unknown"; }
-  if (owner.child && state !== "live") {
-    const childState = ownerState(owner.child, snapshot);
-    if (childState !== "dead") return childState;
-  }
   return state;
-}
-
-export function descendsFrom(owner, ancestorPid, snapshot) {
-  if (ownerState(owner, snapshot) !== "live" || !Number.isInteger(ancestorPid) || ancestorPid <= 0) return false;
-  let pid = owner.pid;
-  try {
-    const source = backend();
-    const rows = snapshot ?? (source === darwin ? processTable() : undefined);
-    while (pid > 0) {
-      if (pid === ancestorPid) return ownerState(owner, snapshot) === "live";
-      const parent = source.processRow(pid, rows).parent;
-      if (!Number.isInteger(parent) || parent === pid) return false;
-      pid = parent;
-    }
-  } catch { return false; }
-  return false;
 }
 
 export function processTable() {

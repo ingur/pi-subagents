@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { acquireLock, atomicJSON, readJSON, sessionId, UUID } from "./lib/state.mjs";
@@ -13,6 +13,7 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 const CONCURRENCY = 4;
 const MAX_LINE = 16 * 1024 * 1024;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const STOPPED_AFTER_SEND = "The subagent was stopped just after the instruction was sent. It may not have acted on it.";
 const message = error => error instanceof Error ? error.message : String(error);
 const text = content => Array.isArray(content) ? content.filter(block => block.type === "text").map(block => block.text).join("\n") : "";
 
@@ -159,8 +160,8 @@ export class SubagentManager {
             record.activity = undefined;
             const tree = observeTree(record);
             record.error = tree.live.length || tree.uncertain || record.launchPending
-              ? "Parent stopped; live or uncertain child work remains. Stop it before resuming."
-              : "Parent stopped before this attempt finished; work was not replayed.";
+              ? "The parent session closed while this subagent was running, and it may still have processes running. Call subagent_stop on it before sending it anything."
+              : "The parent session closed while this subagent was running. Its work is incomplete. Send it an instruction to continue, or start a new one.";
             this.persist(record);
           }
           this.records.set(id, record);
@@ -201,15 +202,15 @@ export class SubagentManager {
     if (resume !== undefined) {
       if (cwd !== undefined || model !== undefined || thinking !== undefined) throw new Error("A follow-up cannot override cwd, model, or thinking");
       previous = this.get(resume);
-      if (ACTIVE.has(previous.status) || this.running.has(resume)) throw new Error("This child already has an active attempt");
+      if (ACTIVE.has(previous.status) || this.running.has(resume)) throw new Error("This subagent is already working. Send again in a moment.");
       const tree = observeTree(previous);
-      if (tree.live.length || tree.uncertain || previous.launchPending) throw new Error("Live or uncertain child work blocks resume; stop it first");
+      if (tree.live.length || tree.uncertain || previous.launchPending) throw new Error("This subagent may still have processes running. Call subagent_stop on it, then send again.");
       ({ cwd, model, thinking } = previous);
       const sessionPath = join(this.root, previous.id, "session.jsonl");
       regularFile(sessionPath);
-      if (!existsSync(sessionPath)) throw new Error("No retained child transcript exists; start a new child instead");
+      if (!existsSync(sessionPath)) throw new Error("This subagent has no saved conversation to continue; start a new subagent instead.");
       const header = JSON.parse(readFileSync(sessionPath, "utf8").split("\n", 1)[0]);
-      if (header.type !== "session" || !UUID.test(header.id) || header.cwd !== cwd) throw new Error("Retained child transcript identity or cwd is invalid");
+      if (header.type !== "session" || !UUID.test(header.id) || header.cwd !== cwd) throw new Error("This subagent's saved conversation is invalid; start a new subagent instead.");
     }
     settings({ cwd, model, thinking });
     const id = previous?.id || randomUUID();
@@ -232,25 +233,25 @@ export class SubagentManager {
     if (record.status === "queued") {
       (record.instructions ||= []).push(text);
       this.publish(record);
-      return { ...descriptor(record), delivery: "queued", note: "Saved in order for launch; not yet consumed." };
+      return { ...descriptor(record), delivery: "queued", note: "Added to its task. It has not started yet." };
     }
     const runtime = this.running.get(id);
-    if (record.status === "stopping" || runtime?.cancelled) throw new Error("This child is stopping; the instruction was not sent");
+    if (record.status === "stopping" || runtime?.cancelled) throw new Error("This subagent is stopping; the instruction was not sent.");
     if (runtime) {
       await runtime.ready;
-      if (runtime.cancelled || runtime.failure) throw new Error(runtime.failure || "This child was cancelled; the instruction was not sent");
+      if (runtime.cancelled || runtime.failure) throw new Error(runtime.failure || "This subagent was stopped; the instruction was not sent.");
       if (!runtime.inputClosing && !runtime.finished) {
         // Unlike raw steer, prompt+steer starts a retained turn if Pi became idle before receipt.
         const disposition = await runtime.prompt(text);
-        if (runtime.cancelled) throw new Error("Child cancelled after send; instruction consumption is unknown");
-        return { ...descriptor(record), delivery: disposition, note: "Pi acknowledged the instruction; this is not proof of consumption or completion." };
+        if (runtime.cancelled) throw new Error(STOPPED_AFTER_SEND);
+        return { ...descriptor(record), delivery: disposition, note: "Delivered to the running subagent." };
       }
       const result = await runtime.done;
-      if (result.status !== "succeeded") throw new Error(`Child ${result.status} during send; instruction was not replayed: ${result.error || "unknown outcome"}`);
+      if (result.status !== "succeeded") throw new Error(`The subagent ${result.status} before it could take the instruction: ${result.error || "unknown outcome"}. The instruction was not delivered.`);
       return this.send({ id, text });
     }
     const child = await this.start({ resume: id, task: text });
-    return { ...child, delivery: "queued", note: "Retained follow-up accepted with the same transcript and settings; not yet consumed." };
+    return { ...child, delivery: "queued", note: "The subagent is continuing with its earlier context. Its result will arrive as a notice." };
   }
   pump() {
     if (this.closed) return;
@@ -302,9 +303,9 @@ export class SubagentManager {
           } while (Date.now() < deadline);
         }
         return tree.live.length
-          ? "Child processes remain alive after SIGKILL; resume remains blocked"
-          : "Child process ownership is uncertain; resume remains blocked";
-      } catch (error) { return `Unable to verify child cleanup: ${message(error)}`; }
+          ? "Processes of this subagent are still alive after SIGKILL; it cannot be continued."
+          : "It is unclear whether processes of this subagent are still running; it cannot be continued.";
+      } catch (error) { return `Unable to verify that the processes of this subagent stopped: ${message(error)}`; }
     })();
     return runtime.termination;
   }
@@ -429,7 +430,7 @@ export class SubagentManager {
       if (runtime.cancelled) void this.terminate(record, runtime);
       await exit;
       if (!runtime.cancelled && (pending.size || !runtime.promptAccepted)) runtime.failure ||= "Pi exited before a correlated prompt acknowledgement; acceptance is unknown";
-      rejectPending(new Error(runtime.failure || (runtime.cancelled ? "Child cancelled; instruction consumption is unknown" : "Pi exited before acknowledging the instruction")));
+      rejectPending(new Error(runtime.failure || (runtime.cancelled ? STOPPED_AFTER_SEND : "Pi exited before acknowledging the instruction")));
       cleanupError = await this.terminate(record, runtime);
     } catch (error) {
       runtime.failure ||= message(error);
@@ -437,11 +438,11 @@ export class SubagentManager {
       else record.launchPending = false;
     } finally {
       clearTimeout(shutdownTimer);
-      rejectPending(new Error(runtime.failure || (runtime.cancelled ? "Child cancelled; instruction consumption is unknown" : "Pi RPC closed")));
+      rejectPending(new Error(runtime.failure || (runtime.cancelled ? STOPPED_AFTER_SEND : "Pi RPC closed")));
       if (child && !closeObserved) {
         await Promise.race([closed, delay(1000)]);
         if (!closeObserved) {
-          cleanupError ||= "Child stdio did not close after process cleanup; ownership remains uncertain";
+          cleanupError ||= "The output of this subagent did not close after its processes were stopped; some may still be running.";
           record.launchPending = true;
           child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
         }
@@ -482,7 +483,7 @@ export class SubagentManager {
       if (tree.live.length || tree.uncertain || record.launchPending) {
         const cleanupError = await this.terminate(record, {});
         record.status = cleanupError || record.launchPending ? "interrupted" : "cancelled";
-        record.error = cleanupError || (record.launchPending ? "Launch ownership is unknown; cannot safely resume this child" : "Interrupted child work was stopped");
+        record.error = cleanupError || (record.launchPending ? "It is unknown whether a process of this subagent is running, so it cannot be continued. Tell the user, who can remove it." : "Its remaining processes were stopped.");
         if (record.status === "interrupted") this.unresolved.add(id);
         else this.unresolved.delete(id);
         this.publish(record);
@@ -490,6 +491,15 @@ export class SubagentManager {
     }
     this.pump();
     return descriptor(record);
+  }
+  // Only the user calls this: it drops a finished or stuck record and frees its slot, accepting unknown launch ownership.
+  forget(id) {
+    const record = this.get(id);
+    if (ACTIVE.has(record.status) || this.running.has(id) || observeTree(record).live.length) throw new Error("This subagent is still active; stop it first");
+    rmSync(join(this.root, id), { recursive: true, force: true });
+    this.records.delete(id);
+    this.unresolved.delete(id);
+    this.pump();
   }
   async close() {
     if (this.closing) return this.closing;

@@ -1,3 +1,4 @@
+// Copied from pi-projects core/lib, which no longer has a copy; this one is maintained here.
 import { readFileSync, readdirSync } from "node:fs";
 
 export function bootIdentity() {
