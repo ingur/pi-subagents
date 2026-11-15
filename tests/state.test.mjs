@@ -84,9 +84,9 @@ test("only visible unattempted automatic completions wake; recorded settled and 
 });
 
 test("state uses the normal XDG location or the explicit product override", () => {
-  assert.equal(stateDirectory({}, "/tmp/home"), "/tmp/home/.local/state/pi-subagents");
-  assert.equal(stateDirectory({ XDG_STATE_HOME: "/tmp/state" }, "/tmp/home"), "/tmp/state/pi-subagents");
-  assert.equal(stateDirectory({ PI_SUBAGENTS_STATE_DIR: "/tmp/custom", XDG_STATE_HOME: "/tmp/state" }), "/tmp/custom");
+  assert.equal(stateDirectory({}, "/no-such-root/home"), "/no-such-root/home/.local/state/pi-subagents");
+  assert.equal(stateDirectory({ XDG_STATE_HOME: "/no-such-root/state" }, "/no-such-root/home"), "/no-such-root/state/pi-subagents");
+  assert.equal(stateDirectory({ PI_SUBAGENTS_STATE_DIR: "/no-such-root/custom", XDG_STATE_HOME: "/no-such-root/state" }), "/no-such-root/custom");
   assert.throws(() => stateDirectory({ PI_SUBAGENTS_STATE_DIR: "relative" }), /absolute/);
   assert.throws(() => stateDirectory({ XDG_STATE_HOME: "relative" }), /absolute/);
 });
