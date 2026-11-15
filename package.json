@@ -4,8 +4,11 @@
   "description": "Background subagents for ordinary Pi sessions",
   "type": "module",
   "license": "MIT",
+  "repository": "github:ingur/pi-subagents",
   "keywords": ["pi-package"],
   "files": ["src"],
+  "engines": { "node": ">=22.19" },
+  "scripts": { "test": "node --test tests/*.test.mjs" },
   "pi": { "extensions": ["./src/subagents.ts"] },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

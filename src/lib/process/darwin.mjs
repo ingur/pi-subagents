@@ -12,11 +12,10 @@ export function parseProcessTable(output) {
     const fields = line.trim().split(/\s+/);
     const [pid, parent, group] = fields.slice(0, 3).map(Number);
     const state = fields[3]?.[0], start = fields.slice(4).join(" ");
+    // Skip a row that does not parse: one odd process must not hide the others.
     if (fields.length !== 9 || !fields.slice(0, 3).every(value => /^\d+$/.test(value)) ||
         ![pid, parent, group].every(value => Number.isSafeInteger(value) && value >= 0) ||
-        !/^[IRSTUZX]$/.test(state) || !startPattern.test(start) || rows.has(pid)) {
-      throw new Error("Invalid macOS ps process row");
-    }
+        !/^[IRSTUZX]$/.test(state) || !startPattern.test(start) || rows.has(pid)) continue;
     rows.set(pid, { pid, parent, group, state, start });
   }
   return rows;

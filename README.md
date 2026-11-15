@@ -10,7 +10,7 @@ The agent hands a task to a child Pi, keeps working, and gets the result when it
 pi install git:github.com/ingur/pi-subagents
 ```
 
-Linux and macOS.
+Linux and macOS. Needs Pi 1.5 and Node 22.19 or newer.
 
 ## Use
 
@@ -32,7 +32,7 @@ Tools: `subagent_start`, `subagent_send`, `subagent_list`, `subagent_result`, `s
 - Up to four run at once. More wait in a queue.
 - They share your files. No worktrees.
 - Closing or reloading the parent stops its children.
-- State lives in `~/.local/state/pi-subagents`.
+- Each parent session keeps its subagents' transcripts, output and logs in `~/.local/state/pi-subagents` until `/subagents forget ID`. Removing the package leaves that folder behind.
 
 ## Update, remove
 
