@@ -157,7 +157,10 @@ export default function subagents(pi: ExtensionAPI) {
   }
 
   async function stop(r: Runtime, id: string) {
-    const child = await r.manager.stop(sessionId(id));
+    // Handled before stopping: whoever stops a run already knows, so its notice must not start a turn.
+    const key = keyOf(r.manager.result(sessionId(id)));
+    r.state.runs[key] = { manual: false, ...r.state.runs[key], turn: "turn-settled" };
+    const child = await r.manager.stop(id);
     remember(r, child);
     return boundedResult(child);
   }
@@ -176,10 +179,9 @@ export default function subagents(pi: ExtensionAPI) {
       const active = r.manager.list().filter((child: Child) => !terminal[child.status]).length;
       const waiting = [...r.completions.keys()].filter(key => !seen.visible.has(key) ||
         (!r.state.runs[key].manual && !r.state.runs[key].turn)).length;
-      const uncertain = Object.values(r.state.runs).filter(attempt => ["uncertain", "failed", "aborted"].includes(attempt.turn ?? "")).length;
       const model = r.ctx.model;
       const modelSelected = !!model && !!r.ctx.modelRegistry.find(model.provider, model.id);
-      const status = `${active} active; ${waiting} waiting${r.state.paused ? "; automatic wakes paused" : ""}${uncertain ? `; ${uncertain} parent turns incomplete (/subagents list)` : ""}${!modelSelected && waiting ? "; select a model for automatic wake" : ""}${r.editor.focusUnavailable ? "; editor focus unavailable" : ""}`;
+      const status = `${active} active; ${waiting} waiting${r.state.paused ? "; automatic wakes paused" : ""}${!modelSelected && waiting ? "; select a model for automatic wake" : ""}${r.editor.focusUnavailable ? "; editor focus unavailable" : ""}`;
       if (status !== r.lastStatus) { r.ctx.ui.setStatus("subagents", `subagents: ${status}`); r.lastStatus = status; }
       const gate = {
         idle: r.ctx.isIdle(), focused: r.editor.focused, pending: r.ctx.hasPendingMessages(), draft: r.ctx.ui.getEditorText(),

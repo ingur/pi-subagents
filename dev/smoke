@@ -1,0 +1,39 @@
+#!/bin/sh
+# By hand after a Pi update: Pi loads this extension, and one subagent runs a real child Pi over RPC to
+# the end. The tools need Pi's TUI, so the subagent is started through the runner. Needs pi.
+set -eu
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export repo PI_CODING_AGENT_DIR="$repo/.state/pi"
+work=$(cd "$(mktemp -d)" && pwd -P)
+export PI_SUBAGENTS_STATE_DIR="$work/state"
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+node --input-type=module <<'EOF'
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+const { SubagentManager } = await import(`${process.env.repo}/src/runner.mjs`);
+const { stateDirectory } = await import(`${process.env.repo}/src/state.mjs`);
+const fail = text => { console.error(`smoke: ${text}`); process.exit(1); };
+const pi = spawn("pi", ["--mode", "rpc", "--no-session", "--no-extensions", "-e", process.env.repo], { stdio: ["pipe", "pipe", "inherit"] });
+pi.stdin.write('{"id":"commands","type":"get_commands"}\n{"id":"state","type":"get_state"}\n');
+const data = {};
+let rest = "";
+for await (const chunk of pi.stdout) {
+  const lines = (rest + chunk).split("\n");
+  rest = lines.pop();
+  for (const record of lines.map(line => JSON.parse(line))) if (record.type === "response") data[record.id] = record.data;
+  if (data.commands && data.state && pi.stdin.writable) pi.stdin.end();
+}
+if (!data.commands?.commands.some(command => command.name === "subagents")) fail("Pi did not load the extension");
+const model = data.state.model ?? fail("the Pi login has no default model");
+let settle;
+const settled = new Promise(resolve => { settle = resolve; });
+const manager = new SubagentManager({ stateDir: stateDirectory(), owner: randomUUID(), command: { executable: "pi", args: [], env: process.env },
+  onChange: child => ["succeeded", "failed", "cancelled", "interrupted"].includes(child.status) && settle() });
+const { id } = await manager.start({ task: "Reply with the single word ok. Do not use tools.", cwd: process.cwd(), model: `${model.provider}/${model.id}`, thinking: "off" });
+await settled;
+const result = manager.result(id);
+await manager.close();
+if (result.status !== "succeeded" || !/\bok\b/i.test(result.output)) fail(`subagent ${result.status}: ${result.error || result.output}`);
+EOF
+echo "smoke: ok"

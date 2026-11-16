@@ -1,28 +1,17 @@
-// Copied from pi-projects core/lib, which no longer has a copy; this one is maintained here.
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { uptime } from "node:os";
 import { ownerState, processIdentity, requireProcessSupport } from "./process.mjs";
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function sessionId(value) {
-  if (typeof value !== "string" || !UUID.test(value)) throw new Error("Expected a complete session UUID");
+  if (typeof value !== "string" || !UUID.test(value)) throw new Error("Expected a complete UUID");
   return value;
 }
 export function readJSON(path, fallback = undefined) {
   try { return JSON.parse(readFileSync(path, "utf8")); }
   catch (error) { if (error.code === "ENOENT") return fallback; throw error; }
-}
-
-// Resolve existing ancestors too: first-run transcripts/state directories may not exist yet.
-export function canonicalPath(path) {
-  try { return realpathSync(path); }
-  catch (error) {
-    const parent = dirname(path);
-    if (error.code !== "ENOENT" || parent === path) throw error;
-    return join(canonicalPath(parent), basename(path));
-  }
 }
 
 function syncDirectory(path) {

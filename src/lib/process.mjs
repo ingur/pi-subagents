@@ -1,4 +1,3 @@
-// Copied from pi-projects core/lib, which no longer has a copy; this one is maintained here.
 import * as linux from "./process/linux.mjs";
 import * as darwin from "./process/darwin.mjs";
 

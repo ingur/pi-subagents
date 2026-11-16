@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
-import { canonicalPath, readJSON, sessionId } from "./lib/state.mjs";
+import { isAbsolute, join, resolve } from "node:path";
+import { readJSON, sessionId } from "./lib/state.mjs";
 import { MESSAGE_TYPE } from "./prompts.mjs";
 
 /** @typedef {"attempting" | "turn-settled" | "aborted" | "failed" | "uncertain"} Turn */
@@ -10,7 +10,7 @@ import { MESSAGE_TYPE } from "./prompts.mjs";
 export function stateDirectory(env = process.env, home = homedir()) {
   const directory = env.PI_SUBAGENTS_STATE_DIR || join(env.XDG_STATE_HOME || join(home, ".local", "state"), "pi-subagents");
   if (!isAbsolute(directory)) throw new Error("PI_SUBAGENTS_STATE_DIR and XDG_STATE_HOME must be absolute");
-  return canonicalPath(directory);
+  return resolve(directory);
 }
 
 export function receiptEntries(entries, owner) {
@@ -29,7 +29,7 @@ export function receiptEntries(entries, owner) {
 export function loadState(directory, owner) {
   const state = readJSON(join(directory, "adapter.json"), { version: 1, owner, paused: false, runs: {} });
   if (state?.version !== 1 || state.owner !== owner || typeof state.paused !== "boolean" ||
-      !state.runs || typeof state.runs !== "object" || Array.isArray(state.runs)) throw new Error("Invalid subagent notification state");
+      !state.runs || typeof state.runs !== "object" || Array.isArray(state.runs)) throw new Error("Invalid subagent wake state");
   for (const [key, attempt] of Object.entries(state.runs)) {
     const split = key.lastIndexOf(":");
     sessionId(key.slice(0, split));

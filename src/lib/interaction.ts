@@ -1,4 +1,3 @@
-// Copied from pi-projects pi/, which no longer has a copy; this one is maintained here.
 import { CustomEditor, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { EditorComponent } from "@earendil-works/pi-tui";
 

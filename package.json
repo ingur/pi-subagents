@@ -1,6 +1,6 @@
 {
   "name": "@ingur/pi-subagents",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Background subagents for ordinary Pi sessions",
   "type": "module",
   "license": "MIT",

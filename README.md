@@ -2,7 +2,7 @@
 
 Background subagents for [Pi](https://pi.dev).
 
-The agent hands a task to a child Pi, keeps working, and gets the result when it is done. It can send the child more instructions while it runs, or continue it afterwards.
+The agent hands a task to a subagent, keeps working, and gets the result when it is done. It can send the subagent more instructions while it runs, or continue it afterwards.
 
 ## Install
 
@@ -27,11 +27,11 @@ Tools: `subagent_start`, `subagent_send`, `subagent_list`, `subagent_result`, `s
 
 ## Good to know
 
-- A child starts fresh. It does not see your conversation, so the task must say everything.
-- Children use your Pi login, context files and skills. They load no extensions.
+- A subagent starts fresh. It does not see your conversation, so the task must say everything.
+- Subagents use your Pi login, context files and skills. They load no extensions.
 - Up to four run at once. More wait in a queue.
 - They share your files. No worktrees.
-- Closing or reloading the parent stops its children.
+- Quitting, `/reload`, `/new`, `/resume`, `/fork` and `/clone` stop running subagents.
 - Each parent session keeps its subagents' transcripts, output and logs in `~/.local/state/pi-subagents` until `/subagents forget ID`. Removing the package leaves that folder behind.
 
 ## Update, remove
@@ -45,5 +45,6 @@ pi remove git:github.com/ingur/pi-subagents
 
 ```sh
 dev/try-pi
+dev/smoke    # after a Pi update: runs one real subagent (one small model turn)
 node --test tests/*.test.mjs
 ```

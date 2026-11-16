@@ -36,7 +36,7 @@ test("an interrupted parent wake becomes uncertain and replay-only without pausi
   assert.equal(JSON.parse(readFileSync(join(directory, "adapter.json"), "utf8")).runs[key].turn, "attempting");
 });
 
-test("invalid adapter state and attempt identities fail closed", t => {
+test("invalid wake state and attempt identities fail closed", t => {
   const { directory, owner, key, state } = fixture(t);
   for (const value of [null, { ...state, version: 2 }, { ...state, owner: randomUUID() }, { ...state, paused: 0 },
     { ...state, runs: [] }, { ...state, runs: null }, ...["bad:1", `${randomUUID()}:0`, `${randomUUID()}:01`, `${randomUUID()}:x`]

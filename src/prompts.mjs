@@ -40,9 +40,9 @@ export const help = [
   "/subagents result ID",
   "/subagents stop ID",
   "/subagents forget ID (drop a finished or stuck subagent and free its slot)",
-  "Only an aborted run pauses automatic wakes; Esc/Ctrl+C while idle does not.",
+  "An aborted turn, or a failed or unclear turn on subagent results, pauses automatic wakes until you send a message; Esc/Ctrl+C while idle does not.",
   "Completions replayed after start/reload are shown without waking the parent; new starts and follow-ups can wake normally.",
-  "/reload stops running subagents. Subagents use your normal login, context and skills, but no extensions.",
+  "Quitting, /reload, /new, /resume, /fork and /clone stop running subagents. Subagents use your normal login, context and skills, but no extensions.",
 ].join("\n");
 
 const OUTPUT_LIMIT = 8000;

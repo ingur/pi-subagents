@@ -1,4 +1,3 @@
-// Copied from pi-projects core/lib, which no longer has a copy; this one is maintained here.
 import { execFileSync } from "node:child_process";
 
 const columns = ["pid", "ppid", "pgid", "stat", "lstart"].flatMap(name => ["-o", `${name}=`]);
