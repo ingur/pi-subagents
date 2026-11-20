@@ -138,7 +138,7 @@ const finished = (manager, id) => until(() => {
   const value = manager.result(id);
   return !["queued", "running", "stopping"].includes(value.status) && value;
 }, "finished child");
-const launch = (cwd, task = "task") => ({ cwd, task, model: "test/exact-model", thinking: "off" });
+const launch = (cwd, task = "task") => ({ title: "title", cwd, task, model: "test/exact-model", thinking: "off" });
 const scenario = value => `CASE:${JSON.stringify(value)}`;
 
 function setup(t) {
@@ -198,6 +198,7 @@ test("literal stdin, normal resources, captured Pi command and retained attempt 
   const second = await manager.send({ id: first.id, text: "follow-up" });
   assert.equal(second.delivery, "queued");
   assert.equal(second.id, first.id);
+  assert.deepEqual([first.title, second.title], ["title", "title"]);
   assert.equal(second.run, 2);
   assert.equal(second.cwd, first.cwd);
   assert.equal(second.model, first.model);
@@ -293,12 +294,13 @@ test("dead-owner recovery interrupts queued work without replay and validates re
   const result = await finished(manager, started.id);
   await manager.close();
   const original = JSON.parse(readFileSync(result.resultPath, "utf8"));
-  atomicJSON(dirname(result.resultPath), "run-2.json", { ...original, run: 2, status: "queued", task: "must not replay", output: "", resultPath: join(dirname(result.resultPath), "run-2.json"), processes: [] });
+  atomicJSON(dirname(result.resultPath), "run-2.json", { ...original, title: undefined, run: 2, status: "queued", task: "must not replay", output: "", resultPath: join(dirname(result.resultPath), "run-2.json"), processes: [] });
   const replay = [];
   const recovered = create(value => replay.push(value));
   await Promise.resolve();
   assert.equal(recovered.result(result.id).status, "interrupted");
   assert.match(recovered.result(result.id).error, /incomplete/);
+  assert.equal(recovered.result(result.id).title, "must not replay");
   assert.equal(replay.length, 2);
   assert.equal(JSON.parse(readFileSync(join(dirname(result.resultPath), "capture.json"), "utf8")).task, "task");
   const sessionPath = join(stateDir, owner, result.id, "session.jsonl");
@@ -306,6 +308,7 @@ test("dead-owner recovery interrupts queued work without replay and validates re
   await assert.rejects(recovered.start({ resume: result.id, task: "follow" }), /saved conversation is invalid/);
   await assert.rejects(recovered.start({ resume: "../../other", task: "follow" }), /UUID/);
   await assert.rejects(recovered.start({ ...launch(cwd), cwd: `${cwd}/..` }), /canonical/);
+  await assert.rejects(recovered.start({ ...launch(cwd), title: " " }), /title must be nonempty/);
 });
 
 test("restart detects live orphaned work, blocks duplicate writers, and permits stop then retained follow-up", async t => {

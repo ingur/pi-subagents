@@ -10,6 +10,7 @@ export const toolDescriptions = {
 };
 
 export const parameterDescriptions = {
+  title: "2 to 5 words describing the work.",
   task: "Complete instructions: the goal, the files it may change, how to check the work, and what to report.",
   cwd: "Directory to work in. Defaults to yours.",
   model: "Exact \"provider/model\". Defaults to yours. Models added by extensions are not available.",
@@ -60,7 +61,7 @@ function preview(child) {
 
 export function compactChild(child) {
   return {
-    id: child.id, status: child.status, task: shortText(child.task, 80),
+    id: child.id, title: child.title, status: child.status,
     ...(child.activity ? { activity: shortText(child.activity) } : {}),
     ...(child.error ? { error: shortText(child.error, 300) } : {}),
   };
@@ -69,7 +70,7 @@ export function compactChild(child) {
 export function boundedResult(child) {
   const { output, error, cut } = preview(child);
   return {
-    id: child.id, status: child.status,
+    id: child.id, title: child.title, status: child.status,
     ...(child.activity ? { activity: shortText(child.activity) } : {}),
     output,
     ...(error ? { error } : {}),
@@ -81,7 +82,7 @@ export function formatCompletion(child, replayed) {
   const { output, error, cut } = preview(child);
   const run = child.run > 1 ? `, follow-up ${child.run - 1}` : "";
   return [
-    `Result from subagent ${child.id}${run} (your background agent, not the user): ${child.status}.\nTask: ${shortText(child.task)}`,
+    `Result from subagent ${child.title}, id ${child.id}${run} (your background agent, not the user): ${child.status}.`,
     error && `Error: ${error}`,
     output || "The subagent returned no text.",
     cut && `The output above is cut. Full output: ${child.resultPath}`,

@@ -6,7 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { acquireLock, atomicJSON, readJSON, sessionId, UUID } from "./lib/state.mjs";
 import { observeTree, processIdentity, processTable, requireProcessSupport, signalTree } from "./lib/process.mjs";
 import { capturePiCommand } from "./command.mjs";
-import { childInstructions } from "./prompts.mjs";
+import { childInstructions, shortText } from "./prompts.mjs";
 
 const ACTIVE = new Set(["queued", "running", "stopping"]);
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
@@ -27,14 +27,15 @@ function regularFile(path) {
   catch (error) { if (error.code === "ENOENT") return; throw error; }
   if (!stat.isFile() || realpathSync(path) !== path) throw new Error(`Unsafe subagent file: ${path}`);
 }
-function settings({ cwd, model, thinking }) {
+function settings({ title, cwd, model, thinking }) {
+  if (typeof title !== "string" || !title.trim()) throw new Error("Subagent title must be nonempty text");
   if (!isAbsolute(cwd || "") || realpathSync(cwd) !== cwd || !statSync(cwd).isDirectory()) throw new Error("Subagent cwd must be an absolute canonical directory");
   if (typeof model !== "string" || !/^[^/\s]+\/[^\s]+$/.test(model) || model.includes("\0")) throw new Error("Subagent model must be an exact provider/model identifier");
   if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinking)) throw new Error("Invalid subagent thinking level");
 }
 function descriptor(record) {
-  const { id, run, status, cwd, model, thinking, task, activity, error, output, resultPath } = record;
-  return { id, run, status, cwd, model, thinking, task, activity, error, output, resultPath };
+  const { id, run, title, status, cwd, model, thinking, task, activity, error, output, resultPath } = record;
+  return { id, run, title, status, cwd, model, thinking, task, activity, error, output, resultPath };
 }
 
 // Pi's JSON message_update deliberately omits message/partial; use content-indexed deltas.
@@ -155,6 +156,7 @@ export class SubagentManager {
           regularFile(join(childDir, file));
           const record = readJSON(join(childDir, file));
           if (record?.version !== 1 || record.owner !== this.owner || record.id !== id || !Number.isSafeInteger(record.run) || `run-${record.run}.json` !== file || (!ACTIVE.has(record.status) && !TERMINAL.has(record.status)) || record.resultPath !== join(childDir, file)) throw new Error(`Invalid owned subagent metadata: ${file}`);
+          record.title ??= shortText(record.task, 80);
           if (ACTIVE.has(record.status)) {
             record.status = "interrupted";
             record.activity = undefined;
@@ -195,29 +197,29 @@ export class SubagentManager {
   }
   list() { return [...this.records.values()].map(descriptor); }
   result(id) { return descriptor(this.get(id)); }
-  async start({ task, cwd, model, thinking, resume }) {
+  async start({ title, task, cwd, model, thinking, resume }) {
     if (this.closed) throw new Error("Subagent manager is closed");
     if (typeof task !== "string" || !task.trim()) throw new Error("Subagent task must be nonempty text");
     let previous;
     if (resume !== undefined) {
-      if (cwd !== undefined || model !== undefined || thinking !== undefined) throw new Error("A follow-up cannot override cwd, model, or thinking");
+      if (title !== undefined || cwd !== undefined || model !== undefined || thinking !== undefined) throw new Error("A follow-up cannot override title, cwd, model, or thinking");
       previous = this.get(resume);
       if (ACTIVE.has(previous.status) || this.running.has(resume)) throw new Error("This subagent is already working. Send again in a moment.");
       const tree = observeTree(previous);
       if (tree.live.length || tree.uncertain || previous.launchPending) throw new Error("This subagent may still have processes running. Call subagent_stop on it, then send again.");
-      ({ cwd, model, thinking } = previous);
+      ({ title, cwd, model, thinking } = previous);
       const sessionPath = join(this.root, previous.id, "session.jsonl");
       regularFile(sessionPath);
       if (!existsSync(sessionPath)) throw new Error("This subagent has no saved conversation to continue; start a new subagent instead.");
       const header = JSON.parse(readFileSync(sessionPath, "utf8").split("\n", 1)[0]);
       if (header.type !== "session" || !UUID.test(header.id) || header.cwd !== cwd) throw new Error("This subagent's saved conversation is invalid; start a new subagent instead.");
     }
-    settings({ cwd, model, thinking });
+    settings({ title, cwd, model, thinking });
     const id = previous?.id || randomUUID();
     const run = previous ? previous.run + 1 : 1;
     const childDir = join(this.root, id);
     directory(childDir);
-    const record = { version: 1, owner: this.owner, id, run, status: "queued", cwd, model, thinking, task, instructions: [], output: "", resultPath: join(childDir, `run-${run}.json`), processes: [] };
+    const record = { version: 1, owner: this.owner, id, run, status: "queued", title, cwd, model, thinking, task, instructions: [], output: "", resultPath: join(childDir, `run-${run}.json`), processes: [] };
     this.persist(record);
     this.unresolved.delete(id);
     this.records.set(id, record);

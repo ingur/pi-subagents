@@ -30,7 +30,7 @@ let settle;
 const settled = new Promise(resolve => { settle = resolve; });
 const manager = new SubagentManager({ stateDir: stateDirectory(), owner: randomUUID(), command: { executable: "pi", args: [], env: process.env },
   onChange: child => ["succeeded", "failed", "cancelled", "interrupted"].includes(child.status) && settle() });
-const { id } = await manager.start({ task: "Reply with the single word ok. Do not use tools.", cwd: process.cwd(), model: `${model.provider}/${model.id}`, thinking: "off" });
+const { id } = await manager.start({ title: "Smoke", task: "Reply with the single word ok. Do not use tools.", cwd: process.cwd(), model: `${model.provider}/${model.id}`, thinking: "off" });
 await settled;
 const result = manager.result(id);
 await manager.close();

@@ -18,7 +18,7 @@ const source = stripTypeScriptTypes(readFileSync(new URL("../src/subagents.ts", 
 test("stopping a subagent shows its notice but does not start a turn", async t => {
   const directory = mkdtempSync(join(tmpdir(), "pi-subagents-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const child = { id: randomUUID(), run: 1, status: "queued", task: "task", output: "" };
+  const child = { id: randomUUID(), run: 1, title: "title", status: "queued", task: "task", output: "" };
   let tick, onChange;
   class SubagentManager {
     constructor(options) { onChange = options.onChange; }
@@ -35,7 +35,7 @@ test("stopping a subagent shows its notice but does not start a turn", async t =
   });
   const handlers = {}, tools = {}, entries = [], turns = [];
   subagents({
-    on: (name, handler) => { handlers[name] = handler; }, registerTool: tool => { tools[tool.name] = tool; }, registerCommand() {},
+    on: (name, handler) => { handlers[name] = handler; }, registerTool: tool => { tools[tool.name] = tool; }, registerCommand() {}, registerMessageRenderer() {},
     getThinkingLevel: () => "off",
     sendMessage: (message, options) => { turns.push(options.triggerTurn); entries.push({ type: "custom_message", id: `${entries.length}`, ...message }); },
   });
@@ -44,11 +44,11 @@ test("stopping a subagent shows its notice but does not start a turn", async t =
     mode: "tui", hasUI: true, cwd: directory, model: { provider: "p", id: "m" }, modelRegistry: { find: () => true },
     isIdle: () => true, hasPendingMessages: () => false,
     sessionManager: { getSessionId: () => owner, getSessionFile: () => "session.jsonl", getEntries: () => entries },
-    ui: { setStatus() {}, notify() {}, onTerminalInput() {}, getEditorText: () => "" },
+    ui: { setStatus() {}, notify() {}, onTerminalInput() {}, getEditorText: () => "", theme: { fg: (_color, text) => text } },
   };
   await handlers.session_start({}, ctx);
-  await tools.subagent_start.execute("start", { task: "task" }, undefined, undefined, ctx);
+  await tools.subagent_start.execute("start", { title: "title", task: "task" }, undefined, undefined, ctx);
   await tools.subagent_stop.execute("stop", { id: child.id }, undefined, undefined, ctx);
   tick();
-  assert.deepEqual(turns, [false]);
+  assert.deepEqual([turns, entries[0].details.title], [[false], "title"]);
 });
