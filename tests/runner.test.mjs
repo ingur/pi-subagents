@@ -560,6 +560,32 @@ test("streaming progress stays in memory and completion is durably published exa
   assert.equal(manager.unresolved.size, 0);
 });
 
+test("stopping a subagent and reporting its result do not depend on a save succeeding, and the result says it is unsaved", async t => {
+  const { cwd, create } = setup(t);
+  const notices = [];
+  const manager = create(value => notices.push(value));
+  const unsavable = child => { rmSync(child.resultPath); mkdirSync(child.resultPath); };
+
+  const held = await manager.start(launch(cwd, scenario({ hold: true })));
+  const pid = join(dirname(held.resultPath), "descendant.pid");
+  await until(() => existsSync(pid), "detached tool process");
+  const descendant = processIdentity(Number(readFileSync(pid, "utf8")));
+  unsavable(held);
+  const stopped = await manager.stop(held.id);
+  assert.deepEqual([stopped.status, ownerState(descendant)], ["cancelled", "dead"]);
+  assert.match(stopped.unsaved, /Unsafe subagent file/);
+  assert.deepEqual(notices.at(-1), stopped);
+
+  const done = await manager.start(launch(cwd, scenario({ progressGate: true })));
+  await until(() => notices.some(value => value.id === done.id && value.output === "partial α"), "streaming progress notice");
+  unsavable(done);
+  writeFileSync(join(dirname(done.resultPath), "progress"), "");
+  const result = await finished(manager, done.id);
+  assert.equal(result.status, "succeeded");
+  assert.match(result.unsaved, /Unsafe subagent file/);
+  assert.deepEqual(notices.at(-1), result);
+});
+
 test("captured command preserves Node arguments and the wrapper environment by value", () => {
   const host = { execPath: "/nix/store/node/bin/node", execArgv: ["--conditions=custom"],
     argv: ["node", "/nix/store/pi/cli.js", "--session", "/parent/session.jsonl"],

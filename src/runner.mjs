@@ -34,8 +34,8 @@ function settings({ title, cwd, model, thinking }) {
   if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinking)) throw new Error("Invalid subagent thinking level");
 }
 function descriptor(record) {
-  const { id, run, title, status, cwd, model, thinking, task, activity, error, output, resultPath } = record;
-  return { id, run, title, status, cwd, model, thinking, task, activity, error, output, resultPath };
+  const { id, run, title, status, cwd, model, thinking, task, activity, error, output, resultPath, unsaved } = record;
+  return { id, run, title, status, finished: TERMINAL.has(status), cwd, model, thinking, task, activity, error, output, resultPath, unsaved };
 }
 
 // Pi's JSON message_update deliberately omits message/partial; use content-indexed deltas.
@@ -183,12 +183,21 @@ export class SubagentManager {
   notify(value) {
     try { Promise.resolve(this.onChange?.(value)).catch(() => {}); } catch { /* UI failures must not break process cleanup. */ }
   }
-  persist(record) {
-    const path = record.resultPath;
-    regularFile(path);
-    atomicJSON(join(this.root, record.id), basename(path), record);
+  save(record) {
+    record.unsaved = undefined;
+    try {
+      regularFile(record.resultPath);
+      atomicJSON(join(this.root, record.id), basename(record.resultPath), record);
+    } catch (error) { record.unsaved = message(error); }
   }
-  publish(record) { this.persist(record); this.notify(descriptor(record)); }
+  persist(record) {
+    this.save(record);
+    if (record.unsaved) throw new Error(record.unsaved);
+  }
+  publish(record) {
+    this.save(record);
+    this.notify(descriptor(record));
+  }
   get(id) {
     sessionId(id);
     const record = this.records.get(id);
@@ -294,7 +303,7 @@ export class SubagentManager {
         let tree;
         for (const signal of ["SIGTERM", "SIGKILL"]) {
           tree = observeTree(record);
-          this.persist(record);
+          this.save(record);
           signalTree(tree, signal);
           const deadline = Date.now() + 1500;
           do {
@@ -398,7 +407,8 @@ export class SubagentManager {
       record.status = "running";
       // A crash between spawn and identity persistence must never silently permit another writer.
       record.launchPending = true;
-      this.publish(record);
+      this.persist(record);
+      this.notify(descriptor(record));
       child = spawn(this.command.executable, args, { cwd: record.cwd, env, detached: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
       runtime.child = child;
       let exited;
@@ -469,12 +479,9 @@ export class SubagentManager {
     if (runtime) {
       runtime.cancelled = true;
       record.status = "stopping";
-      let publishError;
-      try { this.publish(record); } catch (error) { publishError = error; }
+      this.publish(record);
       await this.terminate(record, runtime);
-      const result = await runtime.done;
-      if (publishError) throw publishError;
-      return result;
+      return runtime.done;
     }
     if (record.status === "queued") {
       record.status = "cancelled";

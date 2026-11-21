@@ -11,8 +11,8 @@ import { MESSAGE_TYPE, WAKE_TYPE, boundedResult, compactChild, formatCompletion,
 import { loadState, processingKeys, receiptEntries, retireRecorded, settleTurn, stateDirectory, wakeKeys, type State } from "./state.mjs";
 
 type Child = {
-  id: string; run: number; title: string; status: string; cwd: string; model: string; thinking: string; task: string;
-  activity?: string; error?: string; output?: string; resultPath?: string; note?: string;
+  id: string; run: number; title: string; status: string; finished: boolean; cwd: string; model: string; thinking: string; task: string;
+  activity?: string; error?: string; output?: string; resultPath?: string; note?: string; unsaved?: string;
 };
 type Args = { id?: string; title?: string; task?: string; text?: string };
 type Details = { status?: string; output?: string; error?: string; subagents?: Pick<Child, "title" | "status" | "activity">[] };
@@ -26,7 +26,6 @@ type Runtime = {
   inFlight?: { keys: string[]; at: number }; processing: string[]; outcome?: "completed" | "aborted" | "error";
 };
 
-const terminal: Record<string, true | undefined> = { succeeded: true, failed: true, cancelled: true, interrupted: true };
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const startSchema = Type.Object({
   title: Type.String({ minLength: 1, maxLength: 80, description: about.title }),
@@ -115,7 +114,7 @@ export default function subagents(pi: ExtensionAPI) {
   }
 
   function remember(r: Runtime, child: Child) {
-    if (!terminal[child.status]) return;
+    if (!child.finished) return;
     const key = keyOf(child);
     if (!r.recorded.has(key)) r.completions.set(key, child);
     if (!r.state.runs[key]) {
@@ -190,6 +189,12 @@ export default function subagents(pi: ExtensionAPI) {
     return boundedResult(child);
   }
 
+  function forget(r: Runtime, id: string) {
+    r.manager.forget(sessionId(id));
+    for (const [key, child] of r.completions) if (child.id === id) r.completions.delete(key);
+    return list(r);
+  }
+
   function tick(r: Runtime) {
     if (runtime !== r || r.owner !== r.ctx.sessionManager.getSessionId() || r.fault) return;
     try {
@@ -201,7 +206,7 @@ export default function subagents(pi: ExtensionAPI) {
       }
       let seen = r.completions.size ? receipts(r) : { visible: new Map(), persisted: new Map() };
       retireRecorded(r.completions, seen.persisted, r.state.runs, r.recorded);
-      const active = r.manager.list().filter((child: Child) => !terminal[child.status]).length;
+      const active = r.manager.list().filter((child: Child) => !child.finished).length;
       const waiting = [...r.completions.keys()].filter(key => !seen.visible.has(key) ||
         (!r.state.runs[key].manual && !r.state.runs[key].turn)).length;
       const model = r.ctx.model;
@@ -372,7 +377,7 @@ export default function subagents(pi: ExtensionAPI) {
         if (!verb || verb === "list") value = list(r);
         else if (verb === "result") value = result(r, body);
         else if (verb === "stop") value = await stop(r, body);
-        else if (verb === "forget") { r.manager.forget(sessionId(body)); value = list(r); }
+        else if (verb === "forget") value = forget(r, body);
         else throw new Error(help);
         ctx.ui.notify(JSON.stringify(value, null, 2), "info");
       } catch (error) { ctx.ui.notify(`Subagents: ${describeError(error)}`, "error"); }

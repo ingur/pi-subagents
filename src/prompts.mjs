@@ -5,7 +5,7 @@ export const toolDescriptions = {
   start: "Start a background subagent on a task and return at once with its id. The subagent has none of this conversation and only the built-in tools, not tools added by extensions. Its result arrives as a notice when it finishes.",
   send: "Send a further instruction to a subagent. A running subagent takes it into its current work. A finished one continues with its earlier context and reports again when done.",
   list: "List your subagents with their status.",
-  result: "Read a subagent's latest output, for example to check on one that is still running. A completion notice already contains the result. Long output is cut; the full text is in the file at resultPath.",
+  result: "Read a subagent's latest output, for example to check on one that is still running. A completion notice already contains the result. Long output is cut; once the subagent has finished, the full result is in the file at resultPath.",
   stop: "Stop a subagent. Edits it has already made stay.",
 };
 
@@ -67,6 +67,14 @@ export function compactChild(child) {
   };
 }
 
+const unsaved = child => `This subagent could not be saved (${shortText(child.unsaved, 300)}).`;
+
+function rest(child) {
+  if (child.unsaved) return { note: "The output above is cut, and the rest was not saved." };
+  if (!child.finished) return { note: "The output above is cut. The full result is saved once the subagent has finished." };
+  return { resultPath: child.resultPath, note: `The output above is cut. The full result is in ${child.resultPath}` };
+}
+
 export function boundedResult(child) {
   const { output, error, cut } = preview(child);
   return {
@@ -74,7 +82,8 @@ export function boundedResult(child) {
     ...(child.activity ? { activity: shortText(child.activity) } : {}),
     output,
     ...(error ? { error } : {}),
-    ...(cut ? { truncated: true, resultPath: child.resultPath, note: "The output above is cut. The full text is in the file at resultPath." } : {}),
+    ...(cut ? { truncated: true, ...rest(child) } : {}),
+    ...(child.unsaved ? { unsaved: unsaved(child) } : {}),
   };
 }
 
@@ -85,7 +94,8 @@ export function formatCompletion(child, replayed) {
     `Result from subagent ${child.title}, id ${child.id}${run} (your background agent, not the user): ${child.status}.`,
     error && `Error: ${error}`,
     output || "The subagent returned no text.",
-    cut && `The output above is cut. Full output: ${child.resultPath}`,
+    cut && rest(child).note,
+    child.unsaved && unsaved(child),
     replayed && "This result is from before a restart and may already have been handled.",
   ].filter(Boolean).join("\n\n");
 }
